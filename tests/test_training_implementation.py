@@ -7,6 +7,8 @@ Run this after installing PyTorch to ensure everything works correctly
 import sys
 import os
 import numpy as np
+import tempfile
+import shutil
 
 # Add src to path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
@@ -73,13 +75,13 @@ def test_dataset():
     print("Testing Dataset")
     print("=" * 80)
     
+    test_dir = None
     try:
         import torch
         from src.dataset import RealLULCDataset
         
-        # Create dummy data files
-        test_dir = "/tmp/test_lulc_data"
-        os.makedirs(test_dir, exist_ok=True)
+        # Create temporary directory for test data
+        test_dir = tempfile.mkdtemp()
         
         # Create dummy numpy arrays
         num_samples = 10
@@ -108,10 +110,6 @@ def test_dataset():
         assert targets.shape == (H, W), "Target shape mismatch!"
         print("✅ Data shapes correct!")
         
-        # Clean up
-        import shutil
-        shutil.rmtree(test_dir)
-        
         return True
         
     except ImportError:
@@ -122,6 +120,10 @@ def test_dataset():
         import traceback
         traceback.print_exc()
         return False
+    finally:
+        # Clean up
+        if test_dir and os.path.exists(test_dir):
+            shutil.rmtree(test_dir)
 
 
 def test_utils():
@@ -166,14 +168,14 @@ def test_dataloader():
     print("Testing DataLoader Integration")
     print("=" * 80)
     
+    test_dir = None
     try:
         import torch
         from torch.utils.data import DataLoader
         from src.dataset import RealLULCDataset
         
-        # Create dummy data
-        test_dir = "/tmp/test_lulc_data"
-        os.makedirs(test_dir, exist_ok=True)
+        # Create temporary directory for test data
+        test_dir = tempfile.mkdtemp()
         
         num_samples = 10
         seq_len = 2
@@ -198,10 +200,6 @@ def test_dataloader():
             print(f"   Batch target shape: {batch_targets.shape}")
             break
         
-        # Clean up
-        import shutil
-        shutil.rmtree(test_dir)
-        
         return True
         
     except ImportError:
@@ -212,6 +210,10 @@ def test_dataloader():
         import traceback
         traceback.print_exc()
         return False
+    finally:
+        # Clean up
+        if test_dir and os.path.exists(test_dir):
+            shutil.rmtree(test_dir)
 
 
 def main():

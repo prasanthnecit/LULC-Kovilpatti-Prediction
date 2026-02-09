@@ -24,6 +24,11 @@ from src.model import SpatiotemporalTransformer
 from src.dataset import RealLULCDataset
 from src.utils import set_seed, calculate_metrics, save_checkpoint
 
+# Constants
+BEST_MODEL_FILENAME = 'best_model_real.pth'
+HISTORY_FILENAME = 'training_history_real.json'
+CURVES_FILENAME = 'training_curves.png'
+
 
 def train_epoch(model, dataloader, criterion, optimizer, device):
     """Train for one epoch"""
@@ -201,9 +206,10 @@ def main():
         # Save best model
         if val_metrics['accuracy'] > best_val_acc:
             best_val_acc = val_metrics['accuracy']
+            checkpoint_path = f"{args.output_dir}/checkpoints/{BEST_MODEL_FILENAME}"
             save_checkpoint(
                 model, optimizer, epoch, val_metrics,
-                f"{args.output_dir}/checkpoints/best_model_real.pth"
+                checkpoint_path
             )
             print(f"  ✨ Best model saved! Accuracy: {best_val_acc:.4f}")
         
@@ -216,7 +222,7 @@ def main():
         history['val_f1'].append(val_metrics['f1'])
     
     # Save results
-    with open(f"{args.output_dir}/logs/training_history_real.json", 'w') as f:
+    with open(f"{args.output_dir}/logs/{HISTORY_FILENAME}", 'w') as f:
         json.dump(history, f, indent=2)
     
     # Plot training curves
@@ -250,15 +256,16 @@ def main():
     plt.grid(True)
     
     plt.tight_layout()
-    plt.savefig(f"{args.output_dir}/logs/training_curves.png", dpi=150, bbox_inches='tight')
-    print(f"\n📈 Training curves saved to: {args.output_dir}/logs/training_curves.png")
+    curves_path = f"{args.output_dir}/logs/{CURVES_FILENAME}"
+    plt.savefig(curves_path, dpi=150, bbox_inches='tight')
+    print(f"\n📈 Training curves saved to: {curves_path}")
     
     # Final summary
     print("\n" + "=" * 80)
     print(" ✨ TRAINING COMPLETE ✨")
     print("=" * 80)
     print(f"📊 Best Validation Accuracy: {best_val_acc:.4f}")
-    print(f"💾 Model saved: {args.output_dir}/checkpoints/best_model_real.pth")
+    print(f"💾 Model saved: {args.output_dir}/checkpoints/{BEST_MODEL_FILENAME}")
     print(f"📈 Logs saved: {args.output_dir}/logs/")
     print("=" * 80)
 
