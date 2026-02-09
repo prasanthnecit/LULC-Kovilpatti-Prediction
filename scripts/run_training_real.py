@@ -109,7 +109,7 @@ def main():
     parser.add_argument('--lr', type=float, default=0.0001, help='Learning rate')
     parser.add_argument('--device', type=str, default='cuda', help='Device (cuda/cpu)')
     parser.add_argument('--output_dir', type=str, default='outputs', help='Output directory')
-    parser.add_argument('--num_workers', type=int, default=0, help='DataLoader workers (set 0 for Windows)')
+    parser.add_argument('--num_workers', type=int, default=0, help='DataLoader workers (default 0 for cross-platform compatibility)')
     args = parser.parse_args()
     
     # Setup
