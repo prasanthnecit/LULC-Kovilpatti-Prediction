@@ -1,5 +1,6 @@
 """
-Spatiotemporal Transformer Model for LULC Prediction
+Spatiotemporal Transformer for LULC Prediction
+Simplified architecture that works with real data
 """
 
 import torch
@@ -7,142 +8,116 @@ import torch.nn as nn
 import torch.nn.functional as F
 import math
 
-
 class SpatialEncoder(nn.Module):
-    """CNN-based spatial feature extractor"""
-    def __init__(self, input_channels, d_model=256):
+    """Extract spatial features from LULC maps"""
+    def __init__(self, num_classes=7, d_model=128):
         super().__init__()
-        self.conv1 = nn.Conv2d(input_channels, 64, kernel_size=3, padding=1)
-        self.bn1 = nn.BatchNorm2d(64)
-        self.conv2 = nn.Conv2d(64, 128, kernel_size=3, padding=1)
-        self.bn2 = nn.BatchNorm2d(128)
-        self.conv3 = nn.Conv2d(128, d_model, kernel_size=3, padding=1)
-        self.bn3 = nn.BatchNorm2d(d_model)
-        self.pool = nn.MaxPool2d(2)
+        self.encoder = nn.Sequential(
+            nn.Conv2d(num_classes, 64, kernel_size=3, padding=1),
+            nn.BatchNorm2d(64),
+            nn.ReLU(),
+            nn.Conv2d(64, 128, kernel_size=3, padding=1),
+            nn.BatchNorm2d(128),
+            nn.ReLU(),
+            nn.Conv2d(128, d_model, kernel_size=3, padding=1),
+            nn.BatchNorm2d(d_model),
+            nn.ReLU()
+        )
         
     def forward(self, x):
-        # x: (batch, channels, H, W)
-        x = F.relu(self.bn1(self.conv1(x)))
-        x = self.pool(x)
-        x = F.relu(self.bn2(self.conv2(x)))
-        x = self.pool(x)
-        x = F.relu(self.bn3(self.conv3(x)))
-        return x
+        # x: (batch, num_classes, H, W)
+        return self.encoder(x)  # (batch, d_model, H, W)
 
-
-class PositionalEncoding(nn.Module):
-    """Positional encoding for transformer"""
-    def __init__(self, d_model, max_len=10):
+class TemporalAttention(nn.Module):
+    """Temporal attention across timesteps"""
+    def __init__(self, d_model=128):
         super().__init__()
-        pe = torch.zeros(max_len, d_model)
-        position = torch.arange(0, max_len, dtype=torch.float).unsqueeze(1)
-        div_term = torch.exp(torch.arange(0, d_model, 2).float() * (-math.log(10000.0) / d_model))
-        pe[:, 0::2] = torch.sin(position * div_term)
-        pe[:, 1::2] = torch.cos(position * div_term)
-        self.register_buffer('pe', pe)
+        self.query = nn.Linear(d_model, d_model)
+        self.key = nn.Linear(d_model, d_model)
+        self.value = nn.Linear(d_model, d_model)
+        self.scale = math.sqrt(d_model)
         
     def forward(self, x):
-        # x: (batch, seq_len, d_model)
-        return x + self.pe[:x.size(1), :].unsqueeze(0)
-
-
-class MultiHeadAttention(nn.Module):
-    """Multi-head attention mechanism"""
-    def __init__(self, d_model=256, n_heads=8, dropout=0.1):
-        super().__init__()
-        assert d_model % n_heads == 0
+        # x: (batch, seq_len, d_model, H, W)
+        batch, seq_len, d_model, H, W = x.shape
         
-        self.d_model = d_model
-        self.n_heads = n_heads
-        self.d_k = d_model // n_heads
+        # Reshape to (batch, H, W, seq_len, d_model) for attention
+        x = x.permute(0, 3, 4, 1, 2)  # (batch, H, W, seq_len, d_model)
+        original_shape = x.shape
         
-        self.W_q = nn.Linear(d_model, d_model)
-        self.W_k = nn.Linear(d_model, d_model)
-        self.W_v = nn.Linear(d_model, d_model)
-        self.W_o = nn.Linear(d_model, d_model)
-        
-        self.dropout = nn.Dropout(dropout)
-        
-    def forward(self, query, key, value, mask=None):
-        batch_size = query.size(0)
-        
-        # Linear projections
-        Q = self.W_q(query).view(batch_size, -1, self.n_heads, self.d_k).transpose(1, 2)
-        K = self.W_k(key).view(batch_size, -1, self.n_heads, self.d_k).transpose(1, 2)
-        V = self.W_v(value).view(batch_size, -1, self.n_heads, self.d_k).transpose(1, 2)
+        # Flatten spatial for processing
+        x = x.reshape(batch * H * W, seq_len, d_model)
         
         # Attention
-        scores = torch.matmul(Q, K.transpose(-2, -1)) / math.sqrt(self.d_k)
+        Q = self.query(x)
+        K = self.key(x)
+        V = self.value(x)
         
-        if mask is not None:
-            scores = scores.masked_fill(mask == 0, -1e9)
+        # Scaled dot-product attention
+        attn_scores = torch.matmul(Q, K.transpose(-2, -1)) / self.scale
+        attn_weights = F.softmax(attn_scores, dim=-1)
+        out = torch.matmul(attn_weights, V)
         
-        attn = F.softmax(scores, dim=-1)
-        attn = self.dropout(attn)
+        # Reshape back
+        out = out.reshape(batch, H, W, seq_len, d_model)
+        out = out.permute(0, 3, 4, 1, 2)  # (batch, seq_len, d_model, H, W)
         
-        context = torch.matmul(attn, V)
-        context = context.transpose(1, 2).contiguous().view(batch_size, -1, self.d_model)
-        output = self.W_o(context)
-        
-        return output, attn
+        return out
 
-
-class TransformerBlock(nn.Module):
-    """Transformer encoder block"""
-    def __init__(self, d_model=256, n_heads=8, d_ff=1024, dropout=0.1):
+class SpatiotemporalTransformer(nn.Module):
+    """
+    Complete spatiotemporal model for LULC prediction
+    Simplified architecture that works correctly with real data
+    
+    Supports arbitrary sequence lengths, though tested primarily with seq_len=2.
+    
+    Args:
+        num_classes: Number of LULC classes (default: 7)
+        d_model: Hidden dimension size (default: 128)
+        n_layers: Number of temporal attention layers (default: 2)
+        dropout: Dropout rate (default: 0.1)
+        seq_len: Number of input timesteps (default: 2)
+    """
+    def __init__(self, num_classes=7, d_model=128, n_layers=2, dropout=0.1, seq_len=2):
         super().__init__()
-        self.attention = MultiHeadAttention(d_model, n_heads, dropout)
-        self.norm1 = nn.LayerNorm(d_model)
-        self.norm2 = nn.LayerNorm(d_model)
+        assert n_layers > 0, "n_layers must be a positive integer"
+        assert seq_len > 0, "seq_len must be a positive integer"
         
-        self.ffn = nn.Sequential(
-            nn.Linear(d_model, d_ff),
+        self.num_classes = num_classes
+        self.d_model = d_model
+        self.seq_len = seq_len
+        
+        # Spatial encoder
+        self.spatial_encoder = SpatialEncoder(num_classes, d_model)
+        
+        # Temporal attention layers
+        self.temporal_attention = nn.ModuleList([
+            TemporalAttention(d_model) for _ in range(n_layers)
+        ])
+        
+        # Layer norms
+        self.layer_norms = nn.ModuleList([
+            nn.LayerNorm([d_model]) for _ in range(n_layers)
+        ])
+        
+        # Temporal fusion (handles seq_len timesteps)
+        self.temporal_fusion = nn.Sequential(
+            nn.Conv2d(d_model * seq_len, d_model, kernel_size=3, padding=1),
+            nn.BatchNorm2d(d_model),
             nn.ReLU(),
-            nn.Dropout(dropout),
-            nn.Linear(d_ff, d_model),
             nn.Dropout(dropout)
         )
         
-    def forward(self, x, mask=None):
-        # Self-attention
-        attn_out, attn_weights = self.attention(x, x, x, mask)
-        x = self.norm1(x + attn_out)
-        
-        # FFN
-        ffn_out = self.ffn(x)
-        x = self.norm2(x + ffn_out)
-        
-        return x, attn_weights
-
-
-class SpatiotemporalTransformer(nn.Module):
-    """Complete spatiotemporal transformer for LULC prediction"""
-    def __init__(self, num_classes=7, d_model=256, n_heads=8, n_layers=4, dropout=0.1):
-        super().__init__()
-        self.num_classes = num_classes
-        self.d_model = d_model
-        
-        # Spatial encoder (for each timestep)
-        self.spatial_encoder = SpatialEncoder(num_classes, d_model)
-        
-        # Positional encoding
-        self.pos_encoding = PositionalEncoding(d_model)
-        
-        # Transformer blocks
-        self.transformer_blocks = nn.ModuleList([
-            TransformerBlock(d_model, n_heads, d_model*4, dropout)
-            for _ in range(n_layers)
-        ])
-        
-        # Decoder (upsample back to original resolution)
+        # Decoder
         self.decoder = nn.Sequential(
-            nn.ConvTranspose2d(d_model, 128, kernel_size=4, stride=2, padding=1),
+            nn.Conv2d(d_model, 128, kernel_size=3, padding=1),
             nn.BatchNorm2d(128),
             nn.ReLU(),
-            nn.ConvTranspose2d(128, 64, kernel_size=4, stride=2, padding=1),
+            nn.Dropout(dropout),
+            nn.Conv2d(128, 64, kernel_size=3, padding=1),
             nn.BatchNorm2d(64),
             nn.ReLU(),
-            nn.Conv2d(64, num_classes, kernel_size=3, padding=1)
+            nn.Conv2d(64, num_classes, kernel_size=1)
         )
         
     def forward(self, x):
@@ -150,38 +125,108 @@ class SpatiotemporalTransformer(nn.Module):
         batch_size, seq_len, H, W = x.shape
         
         # Convert to one-hot encoding
-        x_onehot = F.one_hot(x.long(), num_classes=self.num_classes).permute(0, 1, 4, 2, 3).float()
+        x_onehot = F.one_hot(x.long(), num_classes=self.num_classes)
+        # (batch, seq_len, H, W, num_classes)
+        x_onehot = x_onehot.permute(0, 1, 4, 2, 3).float()
         # (batch, seq_len, num_classes, H, W)
         
-        # Encode each timestep
+        # Encode each timestep spatially
         spatial_features = []
         for t in range(seq_len):
-            feat = self.spatial_encoder(x_onehot[:, t])  # (batch, d_model, H/4, W/4)
+            feat = self.spatial_encoder(x_onehot[:, t])  # (batch, d_model, H, W)
             spatial_features.append(feat)
         
-        # Stack temporal dimension
-        spatial_features = torch.stack(spatial_features, dim=1)  # (batch, seq_len, d_model, H/4, W/4)
+        spatial_features = torch.stack(spatial_features, dim=1)
+        # (batch, seq_len, d_model, H, W)
         
-        # Reshape for transformer: (batch, seq_len, d_model * H/4 * W/4)
-        b, t, c, h, w = spatial_features.shape
-        spatial_features = spatial_features.reshape(b, t, c * h * w)
+        # Temporal attention
+        temporal_features = spatial_features
+        for i, (attn_layer, norm_layer) in enumerate(zip(self.temporal_attention, self.layer_norms)):
+            # Apply attention
+            attn_out = attn_layer(temporal_features)
+            
+            # Residual connection + norm (apply per-pixel)
+            # Reshape for LayerNorm
+            b, t, c, h, w = temporal_features.shape
+            temp_reshaped = temporal_features.permute(0, 1, 3, 4, 2).reshape(b * t * h * w, c)
+            attn_reshaped = attn_out.permute(0, 1, 3, 4, 2).reshape(b * t * h * w, c)
+            
+            normed = norm_layer(temp_reshaped + attn_reshaped)
+            temporal_features = normed.reshape(b, t, h, w, c).permute(0, 1, 4, 2, 3)
         
-        # Positional encoding
-        x_encoded = self.pos_encoding(spatial_features)
+        # Fuse temporal information
+        # Concatenate all timesteps
+        fused = temporal_features.reshape(batch_size, seq_len * self.d_model, H, W)
+        fused = self.temporal_fusion(fused)  # (batch, d_model, H, W)
         
-        # Transformer blocks
-        attn_weights_list = []
-        for block in self.transformer_blocks:
-            x_encoded, attn = block(x_encoded)
-            attn_weights_list.append(attn)
+        # Decode to prediction
+        output = self.decoder(fused)  # (batch, num_classes, H, W)
         
-        # Take last timestep
-        x_final = x_encoded[:, -1, :]  # (batch, d_model * h * w)
+        return output, None  # Return None for attention weights (compatibility)
+
+
+# Simpler alternative model (fallback)
+class SimpleLULCModel(nn.Module):
+    """
+    Simplified LULC prediction model
+    Uses CNN-based spatiotemporal feature extraction
+    
+    Supports arbitrary sequence lengths, though tested primarily with seq_len=2.
+    
+    Args:
+        num_classes: Number of LULC classes (default: 7)
+        d_model: Hidden dimension size for encoder output (default: 128)
+        seq_len: Number of input timesteps (default: 2)
+    """
+    def __init__(self, num_classes=7, d_model=128, seq_len=2):
+        super().__init__()
+        assert seq_len > 0, "seq_len must be a positive integer"
         
-        # Reshape back to spatial
-        x_final = x_final.reshape(b, c, h, w)
+        self.num_classes = num_classes
+        self.seq_len = seq_len
         
-        # Decode to original resolution
-        output = self.decoder(x_final)  # (batch, num_classes, H, W)
+        # Encoder for concatenated timesteps
+        self.encoder = nn.Sequential(
+            nn.Conv2d(num_classes * seq_len, 64, kernel_size=3, padding=1),
+            nn.BatchNorm2d(64),
+            nn.ReLU(),
+            nn.Conv2d(64, 128, kernel_size=3, padding=1),
+            nn.BatchNorm2d(128),
+            nn.ReLU(),
+            nn.Conv2d(128, d_model, kernel_size=3, padding=1),
+            nn.BatchNorm2d(d_model),
+            nn.ReLU()
+        )
         
-        return output, attn_weights_list
+        # Decoder
+        self.decoder = nn.Sequential(
+            nn.Conv2d(d_model, 128, kernel_size=3, padding=1),
+            nn.BatchNorm2d(128),
+            nn.ReLU(),
+            nn.Conv2d(128, 64, kernel_size=3, padding=1),
+            nn.BatchNorm2d(64),
+            nn.ReLU(),
+            nn.Conv2d(64, num_classes, kernel_size=1)
+        )
+        
+    def forward(self, x):
+        # x: (batch, seq_len, H, W)
+        batch_size, seq_len, H, W = x.shape
+        
+        # Convert to one-hot
+        x_onehot = F.one_hot(x.long(), num_classes=self.num_classes).float()
+        # (batch, seq_len, H, W, num_classes)
+        x_onehot = x_onehot.permute(0, 1, 4, 2, 3)
+        # (batch, seq_len, num_classes, H, W)
+        
+        # Concatenate timesteps
+        x_concat = x_onehot.reshape(batch_size, seq_len * self.num_classes, H, W)
+        # (batch, seq_len * num_classes, H, W)
+        
+        # Encode
+        features = self.encoder(x_concat)
+        
+        # Decode
+        output = self.decoder(features)
+        
+        return output, None

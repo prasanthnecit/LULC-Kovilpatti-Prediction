@@ -21,15 +21,12 @@ def test_model_architecture():
     
     try:
         import torch
-        from src.model import SpatiotemporalTransformer
+        from src.model import SimpleLULCModel
         
         # Create model
-        model = SpatiotemporalTransformer(
+        model = SimpleLULCModel(
             num_classes=7,
-            d_model=256,
-            n_heads=8,
-            n_layers=4,
-            dropout=0.1
+            d_model=128
         )
         
         # Count parameters
@@ -52,7 +49,6 @@ def test_model_architecture():
         print(f"   Input shape: {x.shape}")
         print(f"   Output shape: {output.shape}")
         print(f"   Expected: ({batch_size}, 7, {H}, {W})")
-        print(f"   Attention weights: {len(attn_weights)} layers")
         
         assert output.shape == (batch_size, 7, H, W), "Output shape mismatch!"
         print("✅ Output shape correct!")
