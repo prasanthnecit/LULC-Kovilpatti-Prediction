@@ -164,7 +164,7 @@ class SpatiotemporalTransformer(nn.Module):
         
         # Reshape for transformer: (batch, seq_len, d_model * H/4 * W/4)
         b, t, c, h, w = spatial_features.shape
-        spatial_features = spatial_features.view(b, t, c * h * w)
+        spatial_features = spatial_features.reshape(b, t, c * h * w)
         
         # Positional encoding
         x_encoded = self.pos_encoding(spatial_features)
@@ -179,7 +179,7 @@ class SpatiotemporalTransformer(nn.Module):
         x_final = x_encoded[:, -1, :]  # (batch, d_model * h * w)
         
         # Reshape back to spatial
-        x_final = x_final.view(b, c, h, w)
+        x_final = x_final.reshape(b, c, h, w)
         
         # Decode to original resolution
         output = self.decoder(x_final)  # (batch, num_classes, H, W)
