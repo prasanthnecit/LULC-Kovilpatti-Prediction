@@ -109,7 +109,7 @@ def main():
     parser.add_argument('--lr', type=float, default=0.0001, help='Learning rate')
     parser.add_argument('--device', type=str, default='cuda', help='Device (cuda/cpu)')
     parser.add_argument('--output_dir', type=str, default='outputs', help='Output directory')
-    parser.add_argument('--num_workers', type=int, default=4, help='DataLoader workers')
+    parser.add_argument('--num_workers', type=int, default=0, help='DataLoader workers (set 0 for Windows)')
     args = parser.parse_args()
     
     # Setup
@@ -139,14 +139,14 @@ def main():
         batch_size=args.batch_size,
         shuffle=True,
         num_workers=args.num_workers,
-        pin_memory=True
+        pin_memory=True if torch.cuda.is_available() else False
     )
     val_loader = DataLoader(
         val_dataset,
         batch_size=args.batch_size,
         shuffle=False,
         num_workers=args.num_workers,
-        pin_memory=True
+        pin_memory=True if torch.cuda.is_available() else False
     )
     
     # Model
