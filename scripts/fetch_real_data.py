@@ -16,10 +16,20 @@ from pathlib import Path
 # Add src to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from src.real_data.api_fetcher import KovilpattiDataFetcher
-from src.real_data.worldcover_api import WorldCoverFetcher
-from src.real_data.preprocessor import preprocess_for_model
-from src.real_data.utils import print_data_summary, visualize_real_data
+# Check for required dependencies
+try:
+    from src.real_data.api_fetcher import KovilpattiDataFetcher
+    from src.real_data.worldcover_api import WorldCoverFetcher
+    from src.real_data.preprocessor import preprocess_for_model
+    from src.real_data.utils import print_data_summary, visualize_real_data
+except ImportError as e:
+    print("❌ Missing required dependencies!")
+    print(f"\nError: {e}")
+    print("\n💡 Please install required packages:")
+    print("   pip install -r requirements.txt")
+    print("\nOr install core packages:")
+    print("   pip install pystac-client planetary-computer rasterio numpy matplotlib")
+    sys.exit(1)
 
 
 def parse_args():
