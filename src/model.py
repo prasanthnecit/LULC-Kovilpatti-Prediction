@@ -68,11 +68,17 @@ class SpatiotemporalTransformer(nn.Module):
     """
     Complete spatiotemporal model for LULC prediction
     Simplified architecture that works correctly with real data
+    
+    Note: This model is designed for exactly 2 timesteps (seq_len=2).
     """
-    def __init__(self, num_classes=7, d_model=128, n_layers=2, dropout=0.1):
+    def __init__(self, num_classes=7, d_model=128, n_layers=2, dropout=0.1, seq_len=2):
         super().__init__()
+        assert n_layers > 0, "n_layers must be a positive integer"
+        assert seq_len > 0, "seq_len must be a positive integer"
+        
         self.num_classes = num_classes
         self.d_model = d_model
+        self.seq_len = seq_len
         
         # Spatial encoder
         self.spatial_encoder = SpatialEncoder(num_classes, d_model)
@@ -87,9 +93,9 @@ class SpatiotemporalTransformer(nn.Module):
             nn.LayerNorm([d_model]) for _ in range(n_layers)
         ])
         
-        # Temporal fusion
+        # Temporal fusion (handles seq_len timesteps)
         self.temporal_fusion = nn.Sequential(
-            nn.Conv2d(d_model * 2, d_model, kernel_size=3, padding=1),  # Concatenate 2 timesteps
+            nn.Conv2d(d_model * seq_len, d_model, kernel_size=3, padding=1),
             nn.BatchNorm2d(d_model),
             nn.ReLU(),
             nn.Dropout(dropout)
@@ -157,14 +163,19 @@ class SimpleLULCModel(nn.Module):
     """
     Simplified LULC prediction model
     Uses CNN-based spatiotemporal feature extraction
+    
+    Note: This model is designed for exactly 2 timesteps (seq_len=2).
     """
-    def __init__(self, num_classes=7, d_model=128):
+    def __init__(self, num_classes=7, d_model=128, seq_len=2):
         super().__init__()
+        assert seq_len > 0, "seq_len must be a positive integer"
+        
         self.num_classes = num_classes
+        self.seq_len = seq_len
         
         # Encoder for concatenated timesteps
         self.encoder = nn.Sequential(
-            nn.Conv2d(num_classes * 2, 64, kernel_size=3, padding=1),
+            nn.Conv2d(num_classes * seq_len, 64, kernel_size=3, padding=1),
             nn.BatchNorm2d(64),
             nn.ReLU(),
             nn.Conv2d(64, 128, kernel_size=3, padding=1),
