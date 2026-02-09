@@ -1,0 +1,62 @@
+real_data:
+  source: planetary_computer  # or worldcover, or both
+  region:
+    name: Kovilpatti
+    lat: 9.17
+    lon: 77.87
+    radius_km: 10
+  
+  years: [2020, 2021, 2022]
+  resolution: 10  # meters
+  
+  preprocessing:
+    patch_size: 256
+    overlap: 0
+    min_quality: 0.8  # minimum data quality threshold
+  
+  splits:
+    train: 0.7
+    val: 0.15
+    test: 0.15
+
+api:
+  planetary_computer:
+    endpoint: https://planetarycomputer.microsoft.com/api/stac/v1
+    collection: io-lulc-annual-v02
+    
+  worldcover:
+    endpoint: https://services.terrascope.be/stac/
+    collection: esa-worldcover
+    
+  cache_dir: ./data/cache/
+  retry_attempts: 3
+  timeout: 300  # seconds
+
+training:
+  epochs: 100
+  batch_size: 16
+  learning_rate: 0.001
+  device: cuda
+  
+  optimizer:
+    type: Adam
+    weight_decay: 0.0001
+  
+  scheduler:
+    type: StepLR
+    step_size: 30
+    gamma: 0.1
+
+model:
+  n_classes: 7
+  input_channels: 1
+  hidden_dim: 256
+  n_layers: 4
+  n_heads: 8
+  dropout: 0.1
+
+output:
+  save_dir: ./outputs/
+  checkpoint_interval: 10
+  save_predictions: true
+  save_visualizations: true
