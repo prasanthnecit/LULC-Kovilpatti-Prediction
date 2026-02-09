@@ -1,242 +1,274 @@
 #!/usr/bin/env python
 """
-Training script for real satellite data
-Supports both real and synthetic LULC data
-
-Usage:
-    python scripts/run_training_real.py --data_dir data/Kovilpatti_LULC_Real/ --real_data
-    python scripts/run_training_real.py --data_dir data/synthetic/ 
+Complete training script for real LULC data
+Trains Spatiotemporal Transformer on real Kovilpatti satellite data
 """
 
 import argparse
-import sys
+import torch
+import torch.nn as nn
+import torch.optim as optim
+from torch.utils.data import DataLoader
 from pathlib import Path
+import json
 import numpy as np
+from tqdm import tqdm
+import matplotlib.pyplot as plt
+import sys
+import os
 
 # Add src to path
-sys.path.insert(0, str(Path(__file__).parent.parent))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+
+from src.model import SpatiotemporalTransformer
+from src.dataset import RealLULCDataset
+from src.utils import set_seed, calculate_metrics, save_checkpoint
+
+# Constants
+BEST_MODEL_FILENAME = 'best_model_real.pth'
+HISTORY_FILENAME = 'training_history_real.json'
+CURVES_FILENAME = 'training_curves.png'
 
 
-def parse_args():
-    """Parse command line arguments"""
-    parser = argparse.ArgumentParser(
-        description="Train LULC prediction model on real or synthetic data",
-        formatter_class=argparse.ArgumentDefaultsHelpFormatter
-    )
+def train_epoch(model, dataloader, criterion, optimizer, device):
+    """Train for one epoch"""
+    model.train()
+    total_loss = 0
+    all_preds = []
+    all_targets = []
     
-    parser.add_argument(
-        '--data_dir',
-        type=str,
-        required=True,
-        help='Directory containing training data'
-    )
-    
-    parser.add_argument(
-        '--real_data',
-        action='store_true',
-        help='Flag to indicate using real satellite data'
-    )
-    
-    parser.add_argument(
-        '--epochs',
-        type=int,
-        default=100,
-        help='Number of training epochs'
-    )
-    
-    parser.add_argument(
-        '--batch_size',
-        type=int,
-        default=16,
-        help='Batch size for training'
-    )
-    
-    parser.add_argument(
-        '--lr',
-        type=float,
-        default=0.001,
-        help='Learning rate'
-    )
-    
-    parser.add_argument(
-        '--output_dir',
-        type=str,
-        default='outputs',
-        help='Output directory for models and logs'
-    )
-    
-    parser.add_argument(
-        '--device',
-        type=str,
-        default='cuda',
-        choices=['cuda', 'cpu'],
-        help='Device to use for training'
-    )
-    
-    return parser.parse_args()
-
-
-def load_data(data_dir: str):
-    """
-    Load training data
-    
-    Args:
-        data_dir: Directory containing .npy files
+    pbar = tqdm(dataloader, desc="Training", leave=False)
+    for inputs, targets in pbar:
+        inputs = inputs.to(device)  # (batch, seq_len, H, W)
+        targets = targets.to(device)  # (batch, H, W)
         
-    Returns:
-        Dictionary with train/val/test splits
-    """
-    data_path = Path(data_dir)
-    
-    print(f"\n📂 Loading data from: {data_dir}")
-    
-    data = {}
-    for split in ['train', 'val', 'test']:
-        input_file = data_path / f"{split}_inputs.npy"
-        target_file = data_path / f"{split}_targets.npy"
+        # Forward
+        outputs, _ = model(inputs)  # (batch, num_classes, H, W)
         
-        if not input_file.exists() or not target_file.exists():
-            print(f"  ⚠️  {split} data not found, skipping...")
-            continue
+        # Loss
+        loss = criterion(outputs, targets)
         
-        data[split] = {
-            'inputs': np.load(input_file),
-            'targets': np.load(target_file)
-        }
+        # Backward
+        optimizer.zero_grad()
+        loss.backward()
+        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+        optimizer.step()
         
-        print(f"  ✅ {split}: {len(data[split]['inputs'])} samples")
+        total_loss += loss.item()
+        
+        # Metrics
+        preds = outputs.argmax(dim=1).cpu().numpy()
+        all_preds.append(preds)
+        all_targets.append(targets.cpu().numpy())
+        
+        pbar.set_postfix({'loss': f'{loss.item():.4f}'})
     
-    # Load metadata if available
-    metadata_file = data_path / "metadata.txt"
-    if metadata_file.exists():
-        print(f"\n📋 Metadata:")
-        with open(metadata_file, 'r') as f:
-            print(f.read())
+    # Calculate metrics
+    all_preds = np.concatenate(all_preds)
+    all_targets = np.concatenate(all_targets)
+    metrics = calculate_metrics(all_preds, all_targets)
+    metrics['loss'] = total_loss / len(dataloader)
     
-    return data
+    return metrics
 
 
-def detect_data_source(data_dir: str):
-    """
-    Detect if data is real or synthetic
+def validate(model, dataloader, criterion, device):
+    """Validate model"""
+    model.eval()
+    total_loss = 0
+    all_preds = []
+    all_targets = []
     
-    Args:
-        data_dir: Data directory
-        
-    Returns:
-        Tuple of (is_real, info_dict)
-    """
-    data_path = Path(data_dir)
+    with torch.no_grad():
+        for inputs, targets in tqdm(dataloader, desc="Validation", leave=False):
+            inputs = inputs.to(device)
+            targets = targets.to(device)
+            
+            outputs, _ = model(inputs)
+            loss = criterion(outputs, targets)
+            
+            total_loss += loss.item()
+            
+            preds = outputs.argmax(dim=1).cpu().numpy()
+            all_preds.append(preds)
+            all_targets.append(targets.cpu().numpy())
     
-    # Check for real data indicators
-    is_real = 'real' in data_dir.lower() or 'kovilpatti' in data_dir.lower()
+    all_preds = np.concatenate(all_preds)
+    all_targets = np.concatenate(all_targets)
+    metrics = calculate_metrics(all_preds, all_targets)
+    metrics['loss'] = total_loss / len(dataloader)
     
-    info = {
-        'source': 'Real Satellite Data' if is_real else 'Synthetic Data',
-        'region': 'Kovilpatti, Tamil Nadu' if is_real else 'Synthetic',
-        'location': '9.17°N, 77.87°E' if is_real else 'N/A'
-    }
-    
-    # Try to detect years from cached data
-    cache_dir = Path('data/cache')
-    if cache_dir.exists():
-        cached_files = list(cache_dir.glob('*.npy'))
-        if cached_files:
-            years = set()
-            for f in cached_files:
-                # Extract year from filename like "Kovilpatti_2020_lulc.npy"
-                parts = f.stem.split('_')
-                for part in parts:
-                    if part.isdigit() and len(part) == 4:
-                        years.add(int(part))
-            if years:
-                info['years'] = sorted(years)
-    
-    return is_real, info
-
-
-def train_model(data: dict, args):
-    """
-    Train the model
-    
-    Args:
-        data: Dictionary with train/val/test data
-        args: Training arguments
-    """
-    print("\n" + "=" * 80)
-    print(" TRAINING")
-    print("=" * 80)
-    
-    # TODO: Implement actual training loop
-    # This is a placeholder that demonstrates the interface
-    
-    print("\n⚠️  Note: Full training implementation requires model definition")
-    print("This script provides the data loading interface for real satellite data")
-    
-    print(f"\n📊 Training configuration:")
-    print(f"  Epochs: {args.epochs}")
-    print(f"  Batch size: {args.batch_size}")
-    print(f"  Learning rate: {args.lr}")
-    print(f"  Device: {args.device}")
-    
-    # Print data shapes
-    if 'train' in data:
-        print(f"\n📐 Data shapes:")
-        print(f"  Input: {data['train']['inputs'].shape}")
-        print(f"  Target: {data['train']['targets'].shape}")
-    
-    # Placeholder for training loop
-    print(f"\n💡 To complete training, you need to:")
-    print(f"  1. Define your model architecture")
-    print(f"  2. Create DataLoaders from the loaded numpy arrays")
-    print(f"  3. Implement training loop with your model")
-    print(f"  4. Save trained model to {args.output_dir}")
+    return metrics
 
 
 def main():
-    """Main execution function"""
-    args = parse_args()
+    parser = argparse.ArgumentParser(description='Train LULC model on real data')
+    parser.add_argument('--data_dir', type=str, required=True, help='Path to data directory')
+    parser.add_argument('--epochs', type=int, default=50, help='Number of epochs')
+    parser.add_argument('--batch_size', type=int, default=32, help='Batch size')
+    parser.add_argument('--lr', type=float, default=0.0001, help='Learning rate')
+    parser.add_argument('--device', type=str, default='cuda', help='Device (cuda/cpu)')
+    parser.add_argument('--output_dir', type=str, default='outputs', help='Output directory')
+    parser.add_argument('--num_workers', type=int, default=4, help='DataLoader workers')
+    args = parser.parse_args()
     
+    # Setup
+    set_seed(42)
+    device = torch.device(args.device if torch.cuda.is_available() else 'cpu')
+    
+    # Print header
     print("=" * 80)
-    print(" 🧠 LULC PREDICTION MODEL TRAINING")
+    print(" 🛰️  LULC PREDICTION - REAL DATA TRAINING")
+    print("=" * 80)
+    print(f"📍 Region: Kovilpatti, Tamil Nadu")
+    print(f"🎮 Device: {device}")
+    if torch.cuda.is_available():
+        print(f"💻 GPU: {torch.cuda.get_device_name(0)}")
     print("=" * 80)
     
-    # Detect data source
-    is_real, info = detect_data_source(args.data_dir)
+    # Create datasets
+    print(f"\n📂 Loading data from: {args.data_dir}")
+    train_dataset = RealLULCDataset(args.data_dir, split='train')
+    val_dataset = RealLULCDataset(args.data_dir, split='val')
     
-    if args.real_data or is_real:
-        print("\n🛰️  Training Mode: REAL SATELLITE DATA")
-        print(f"📍 Region: {info['region']}")
-        print(f"🌍 Location: {info['location']}")
-        if 'years' in info:
-            print(f"📅 Data Years: {info['years']}")
-        print(f"📡 Source: Microsoft Planetary Computer / ESA WorldCover")
-        print(f"🎯 Resolution: 10m")
-    else:
-        print("\n🔧 Training Mode: SYNTHETIC DATA")
+    print(f"  ✅ Train: {len(train_dataset)} samples")
+    print(f"  ✅ Val: {len(val_dataset)} samples")
     
-    # Load data
-    data = load_data(args.data_dir)
+    train_loader = DataLoader(
+        train_dataset, 
+        batch_size=args.batch_size,
+        shuffle=True,
+        num_workers=args.num_workers,
+        pin_memory=True
+    )
+    val_loader = DataLoader(
+        val_dataset,
+        batch_size=args.batch_size,
+        shuffle=False,
+        num_workers=args.num_workers,
+        pin_memory=True
+    )
     
-    if not data:
-        print("\n❌ No data loaded! Check your data directory.")
-        return 1
+    # Model
+    print("\n🧠 Creating model...")
+    model = SpatiotemporalTransformer(
+        num_classes=7,
+        d_model=256,
+        n_heads=8,
+        n_layers=4,
+        dropout=0.1
+    ).to(device)
     
-    # Train model
-    try:
-        train_model(data, args)
-    except Exception as e:
-        print(f"\n❌ Training error: {e}")
-        import traceback
-        traceback.print_exc()
-        return 1
+    total_params = sum(p.numel() for p in model.parameters())
+    print(f"📊 Model parameters: {total_params:,}")
     
+    # Loss & optimizer
+    criterion = nn.CrossEntropyLoss()
+    optimizer = optim.AdamW(model.parameters(), lr=args.lr, weight_decay=1e-4)
+    scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.epochs)
+    
+    # Create output directories
+    Path(args.output_dir, 'checkpoints').mkdir(parents=True, exist_ok=True)
+    Path(args.output_dir, 'logs').mkdir(parents=True, exist_ok=True)
+    
+    # Training loop
+    print("\n" + "=" * 80)
+    print(" 🚂 TRAINING START")
+    print("=" * 80)
+    
+    best_val_acc = 0
+    history = {
+        'train_loss': [], 'val_loss': [],
+        'train_acc': [], 'val_acc': [],
+        'train_f1': [], 'val_f1': []
+    }
+    
+    for epoch in range(1, args.epochs + 1):
+        print(f"\n📅 Epoch {epoch}/{args.epochs}")
+        print("-" * 80)
+        
+        # Train
+        train_metrics = train_epoch(model, train_loader, criterion, optimizer, device)
+        
+        # Validate
+        val_metrics = validate(model, val_loader, criterion, device)
+        
+        # Scheduler step
+        scheduler.step()
+        
+        # Print results
+        print(f"\n📊 Results:")
+        print(f"  Train - Loss: {train_metrics['loss']:.4f}, Acc: {train_metrics['accuracy']:.4f}, "
+              f"F1: {train_metrics['f1']:.4f}, Kappa: {train_metrics['kappa']:.4f}")
+        print(f"  Val   - Loss: {val_metrics['loss']:.4f}, Acc: {val_metrics['accuracy']:.4f}, "
+              f"F1: {val_metrics['f1']:.4f}, Kappa: {val_metrics['kappa']:.4f}")
+        
+        # Save best model
+        if val_metrics['accuracy'] > best_val_acc:
+            best_val_acc = val_metrics['accuracy']
+            checkpoint_path = f"{args.output_dir}/checkpoints/{BEST_MODEL_FILENAME}"
+            save_checkpoint(
+                model, optimizer, epoch, val_metrics,
+                checkpoint_path
+            )
+            print(f"  ✨ Best model saved! Accuracy: {best_val_acc:.4f}")
+        
+        # Save history
+        history['train_loss'].append(train_metrics['loss'])
+        history['val_loss'].append(val_metrics['loss'])
+        history['train_acc'].append(train_metrics['accuracy'])
+        history['val_acc'].append(val_metrics['accuracy'])
+        history['train_f1'].append(train_metrics['f1'])
+        history['val_f1'].append(val_metrics['f1'])
+    
+    # Save results
+    with open(f"{args.output_dir}/logs/{HISTORY_FILENAME}", 'w') as f:
+        json.dump(history, f, indent=2)
+    
+    # Plot training curves
+    plt.figure(figsize=(15, 5))
+    
+    plt.subplot(1, 3, 1)
+    plt.plot(history['train_loss'], label='Train')
+    plt.plot(history['val_loss'], label='Val')
+    plt.title('Loss')
+    plt.xlabel('Epoch')
+    plt.ylabel('Loss')
+    plt.legend()
+    plt.grid(True)
+    
+    plt.subplot(1, 3, 2)
+    plt.plot(history['train_acc'], label='Train')
+    plt.plot(history['val_acc'], label='Val')
+    plt.title('Accuracy')
+    plt.xlabel('Epoch')
+    plt.ylabel('Accuracy')
+    plt.legend()
+    plt.grid(True)
+    
+    plt.subplot(1, 3, 3)
+    plt.plot(history['train_f1'], label='Train')
+    plt.plot(history['val_f1'], label='Val')
+    plt.title('F1-Score')
+    plt.xlabel('Epoch')
+    plt.ylabel('F1-Score')
+    plt.legend()
+    plt.grid(True)
+    
+    plt.tight_layout()
+    curves_path = f"{args.output_dir}/logs/{CURVES_FILENAME}"
+    plt.savefig(curves_path, dpi=150, bbox_inches='tight')
+    print(f"\n📈 Training curves saved to: {curves_path}")
+    
+    # Final summary
     print("\n" + "=" * 80)
     print(" ✨ TRAINING COMPLETE ✨")
-    print("=" * 80 + "\n")
-    
-    return 0
+    print("=" * 80)
+    print(f"📊 Best Validation Accuracy: {best_val_acc:.4f}")
+    print(f"💾 Model saved: {args.output_dir}/checkpoints/{BEST_MODEL_FILENAME}")
+    print(f"📈 Logs saved: {args.output_dir}/logs/")
+    print("=" * 80)
 
 
-if __name__ == "__main__":
-    sys.exit(main())
+if __name__ == '__main__':
+    main()
