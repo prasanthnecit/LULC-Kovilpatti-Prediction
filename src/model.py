@@ -69,7 +69,14 @@ class SpatiotemporalTransformer(nn.Module):
     Complete spatiotemporal model for LULC prediction
     Simplified architecture that works correctly with real data
     
-    Note: This model is designed for exactly 2 timesteps (seq_len=2).
+    Supports arbitrary sequence lengths, though tested primarily with seq_len=2.
+    
+    Args:
+        num_classes: Number of LULC classes (default: 7)
+        d_model: Hidden dimension size (default: 128)
+        n_layers: Number of temporal attention layers (default: 2)
+        dropout: Dropout rate (default: 0.1)
+        seq_len: Number of input timesteps (default: 2)
     """
     def __init__(self, num_classes=7, d_model=128, n_layers=2, dropout=0.1, seq_len=2):
         super().__init__()
@@ -164,7 +171,12 @@ class SimpleLULCModel(nn.Module):
     Simplified LULC prediction model
     Uses CNN-based spatiotemporal feature extraction
     
-    Note: This model is designed for exactly 2 timesteps (seq_len=2).
+    Supports arbitrary sequence lengths, though tested primarily with seq_len=2.
+    
+    Args:
+        num_classes: Number of LULC classes (default: 7)
+        d_model: Hidden dimension size for encoder output (default: 128)
+        seq_len: Number of input timesteps (default: 2)
     """
     def __init__(self, num_classes=7, d_model=128, seq_len=2):
         super().__init__()
