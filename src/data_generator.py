@@ -5,7 +5,6 @@ Generates realistic multi-temporal Land Use/Land Cover data for Kovilpatti regio
 
 import numpy as np
 from typing import Tuple, List
-import cv2
 
 
 class KovilpattiLULCGenerator:
@@ -239,18 +238,18 @@ class KovilpattiLULCGenerator:
         Returns:
             Smoothed LULC map
         """
+        from scipy.ndimage import generic_filter
         from scipy import stats
         
-        smoothed = lulc_map.copy()
-        pad = kernel_size // 2
+        def mode_func(x):
+            """Calculate mode of a window."""
+            vals, counts = np.unique(x, return_counts=True)
+            return vals[np.argmax(counts)]
         
-        for i in range(pad, self.img_size - pad):
-            for j in range(pad, self.img_size - pad):
-                window = lulc_map[i-pad:i+pad+1, j-pad:j+pad+1]
-                mode_val = stats.mode(window, axis=None, keepdims=False)[0]
-                smoothed[i, j] = mode_val
+        # Apply mode filter efficiently using scipy
+        smoothed = generic_filter(lulc_map.astype(float), mode_func, size=kernel_size, mode='nearest')
         
-        return smoothed
+        return smoothed.astype(np.int32)
     
     def generate_temporal_sequence(self, num_timesteps: int = 5) -> List[np.ndarray]:
         """
