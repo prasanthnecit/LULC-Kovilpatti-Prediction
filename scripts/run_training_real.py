@@ -20,7 +20,7 @@ import os
 # Add src to path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
-from src.model import SpatiotemporalTransformer
+from src.model import SpatiotemporalTransformer, SimpleLULCModel
 from src.dataset import RealLULCDataset
 from src.utils import set_seed, calculate_metrics, save_checkpoint
 
@@ -151,12 +151,9 @@ def main():
     
     # Model
     print("\n🧠 Creating model...")
-    model = SpatiotemporalTransformer(
+    model = SimpleLULCModel(
         num_classes=7,
-        d_model=256,
-        n_heads=8,
-        n_layers=4,
-        dropout=0.1
+        d_model=128
     ).to(device)
     
     total_params = sum(p.numel() for p in model.parameters())
